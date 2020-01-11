@@ -11,6 +11,7 @@ edition = "2018"
 
 [features]
 use_gtk = ["gtk", "gtk-sys", "gio", "gdk", "gdk-sys", "glib", "glib-sys", "cairo-rs"]
+android = ["piet-common/android"]
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
@@ -46,7 +47,7 @@ cocoa = "0.20.0"
 objc = "0.2.5"
 cairo-rs = { version = "0.7.1", default_features = false }
 
-[target.'cfg(target_os="linux")'.dependencies]
+[target.'cfg(all(target_os="linux", not(target_os="android")))'.dependencies]
 cairo-rs = {  version = "0.7.1", default_features = false }
 gio = "0.7.0"
 gdk = "0.11.0"
@@ -55,6 +56,6 @@ glib = "0.8.1"
 glib-sys = "0.9.0"
 gtk-sys = "0.9.0"
 
-[target.'cfg(target_os="linux")'.dependencies.gtk]
+[target.'cfg(all(target_os="linux", not(target_os="android")))'.dependencies.gtk]
 version = "0.7.0"
 features = ["v3_20"]

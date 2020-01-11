@@ -18,6 +18,9 @@ cfg_if::cfg_if! {
     if #[cfg(all(target_os = "windows", not(feature = "use_gtk")))] {
         mod windows;
         pub use windows::*;
+    } else if #[cfg(target_os = "android")] {
+        mod android;
+        pub use android::*;
     } else if #[cfg(all(target_os = "macos", not(feature = "use_gtk")))] {
         mod mac;
         pub use mac::*;
