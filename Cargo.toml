@@ -9,4 +9,5 @@ members = [
 # My fork of Piet that has Piet-Android
 piet-common = {git = "https://github.com/marcopolo/piet"}
 # Local fork that lets us turn Local and Argument int Global
-jni-glue = {git = "https://github.com/marcopolo/jni-bindgen", branch = "jni-glue-only"}
+#jni-glue = {git = "https://github.com/marcopolo/jni-bindgen", branch = "jni-glue-only"}
+jni-glue = {path = "../jni-bindgen"}
