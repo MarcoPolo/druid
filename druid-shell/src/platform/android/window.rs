@@ -210,17 +210,18 @@ impl WindowHandle {
     /// TODO: we want to migrate this from dpi (with 96 as nominal) to a scale
     /// factor (with 1 as nominal).
     pub fn get_dpi(&self) -> f32 {
-        with_android_context(|android_context| {
-            let res = android_context
-                .getResources()
-                .expect("Get Resources Failed")
-                .expect("Get Resources Failed");
-            let display_metrics = res
-                .getDisplayMetrics()
-                .expect("Get Display Metrics Failed")
-                .expect("Get Display Metrics Failed");
-            display_metrics.density()
-        })
+        2.625
+        // with_android_context(|android_context| {
+        //     let res = android_context
+        //         .getResources()
+        //         .expect("Get Resources Failed")
+        //         .expect("Get Resources Failed");
+        //     let display_metrics = res
+        //         .getDisplayMetrics()
+        //         .expect("Get Display Metrics Failed")
+        //         .expect("Get Display Metrics Failed");
+        //     display_metrics.density()
+        // })
     }
 }
 
@@ -453,7 +454,11 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onDraw(
             let mut android_render_context = AndroidRenderContext::new(&mut canvas_context);
             let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
-            handler.paint(&mut android_render_context, &mut WinCtxImpl::default());
+            let mut win_ctx = WinCtxImpl::default();
+            let is_animating = handler.paint(&mut android_render_context, &mut win_ctx);
+            if is_animating {
+                win_ctx.invalidate()
+            }
         },
         || {},
     );
