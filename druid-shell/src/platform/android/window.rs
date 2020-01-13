@@ -28,6 +28,7 @@ thread_local!(static ANDROID_CONTEXT: RefCell<Option<Rc<Global<AContext>>>> = Re
 thread_local!(static DRUID_VIEW: RefCell<Option<Rc<Global<View>>>> = RefCell::new(None));
 thread_local!(static IDLE_RUNNABLE: RefCell<Option<Global<Runnable>>> = RefCell::new(None));
 thread_local!(static ANDROID_HANDLER: RefCell<Option<Global<Handler>>> = RefCell::new(None));
+thread_local!(static INITIAL_SIZE: RefCell<(i32, i32)> = RefCell::new((0, 0)));
 
 // Currently we only have one window active at a time.
 thread_local!(static CURRENT_WINHANDLE: RefCell<Option<WindowHandle>> = RefCell::new(None));
@@ -93,11 +94,15 @@ where
     })
 }
 
-pub(crate) fn with_current_windowhandle<F, R>(f: F) -> R
+pub(crate) fn with_current_windowhandle<F, G, R>(f: F, fallback: G) -> R
 where
     F: FnOnce(&mut WindowHandle) -> R,
+    G: FnOnce() -> R,
 {
-    CURRENT_WINHANDLE.with(|rc| f(rc.borrow_mut().as_mut().expect("WinHandler not set!")))
+    CURRENT_WINHANDLE.with(|rc| match rc.borrow_mut().as_mut() {
+        Some(window_handle) => f(window_handle),
+        None => fallback(),
+    })
 }
 
 #[derive(Clone)]
@@ -258,12 +263,18 @@ impl WindowBuilder {
             let mut handler = handle.handler.as_ref().unwrap().borrow_mut();
             handler.connect(&handle.clone().into());
             handler.connected(&mut WinCtxImpl::default());
+            INITIAL_SIZE.with(|initial_size| {
+                let (width, height) = *initial_size.borrow();
+                handler.size(width as u32, height as u32, &mut WinCtxImpl::default());
+            });
         }
 
         CURRENT_WINHANDLE.with(|rc| {
             *rc.borrow_mut() = Some(handle.clone());
         });
 
+        // Invalidate the view so we get our onDraw handler called
+        handle.invalidate();
         Ok(handle)
     }
 }
@@ -390,18 +401,21 @@ pub unsafe extern "system" fn Java_io_marcopolo_druid_DruidView_setup(
 /// Called by Android at the end of the current work queue. No Gaurantee this is really idle. Is there a way to run on idle?
 #[no_mangle]
 pub extern "system" fn Java_io_marcopolo_druid_DruidView_onIdle(_env: &Env, _this: jobject) {
-    with_current_windowhandle(|window_handle| {
-        let queue: Vec<_> = std::mem::replace(
-            &mut window_handle.idle_queue.lock().expect("queue"),
-            Vec::new(),
-        );
-        let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
-        let handler_as_any = handler.as_any();
+    with_current_windowhandle(
+        |window_handle| {
+            let queue: Vec<_> = std::mem::replace(
+                &mut window_handle.idle_queue.lock().expect("queue"),
+                Vec::new(),
+            );
+            let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
+            let handler_as_any = handler.as_any();
 
-        for callback in queue {
-            callback.call(handler_as_any);
-        }
-    });
+            for callback in queue {
+                callback.call(handler_as_any);
+            }
+        },
+        || {},
+    );
 }
 
 /// Called by Android for a timer
@@ -411,15 +425,18 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onTimer(
     _this: jobject,
     token_id: i32,
 ) {
-    with_current_windowhandle(|window_handle| {
-        let token = TimerToken::new(token_id as usize);
-        window_handle
-            .handler
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .timer(token, &mut WinCtxImpl::default());
-    });
+    with_current_windowhandle(
+        |window_handle| {
+            let token = TimerToken::new(token_id as usize);
+            window_handle
+                .handler
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .timer(token, &mut WinCtxImpl::default());
+        },
+        || {},
+    );
 }
 
 /// Our draw call
@@ -429,14 +446,17 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onDraw(
     _this: jobject,
     canvas: Argument<Canvas>,
 ) {
-    with_current_windowhandle(|window_handle| {
-        let canvas = unsafe { canvas.with_unchecked(env).unwrap() };
-        let mut canvas_context = CanvasContext::new_from_canvas(&canvas);
-        let mut android_render_context = AndroidRenderContext::new(&mut canvas_context);
-        let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
+    with_current_windowhandle(
+        |window_handle| {
+            let canvas = unsafe { canvas.with_unchecked(env).unwrap() };
+            let mut canvas_context = CanvasContext::new_from_canvas(&canvas);
+            let mut android_render_context = AndroidRenderContext::new(&mut canvas_context);
+            let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
-        handler.paint(&mut android_render_context, &mut WinCtxImpl::default());
-    });
+            handler.paint(&mut android_render_context, &mut WinCtxImpl::default());
+        },
+        || {},
+    );
 }
 
 /// Called on touch events
@@ -445,47 +465,51 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onTouchEvent(
     env: &Env,
     _this: jobject,
     motion_event: Argument<MotionEvent>,
-) {
-    with_current_windowhandle(|window_handle| {
-        let motion_event = unsafe { motion_event.with_unchecked(env).unwrap() };
-        let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
+) -> bool {
+    with_current_windowhandle(
+        |window_handle| {
+            let motion_event = unsafe { motion_event.with_unchecked(env).unwrap() };
+            let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
-        let pos = Point::new(
-            motion_event.getX().unwrap() as f64,
-            motion_event.getY().unwrap() as f64,
-        );
+            let pos = Point::new(
+                motion_event.getX().unwrap() as f64,
+                motion_event.getY().unwrap() as f64,
+            );
 
-        let mods = KeyModifiers::default();
+            let mods = KeyModifiers::default();
 
-        let button = MouseButton::Left;
+            let button = MouseButton::Left;
 
-        // Hack – A touch screen is like a mouse, right? /s
-        match motion_event
-            .getAction()
-            .expect("Failed to read touch action")
-        {
-            MotionEvent::ACTION_DOWN => handler.mouse_down(
-                &MouseEvent {
-                    pos,
-                    mods,
-                    button,
-                    count: 1,
-                },
-                &mut WinCtxImpl::default(),
-            ),
-            MotionEvent::ACTION_UP => handler.mouse_up(
-                &MouseEvent {
-                    pos,
-                    mods,
-                    button,
-                    count: 0,
-                },
-                &mut WinCtxImpl::default(),
-            ),
-            // Ignore other actions
-            _ => {}
-        }
-    });
+            // Hack – A touch screen is like a mouse, right? /s
+            match motion_event
+                .getAction()
+                .expect("Failed to read touch action")
+            {
+                MotionEvent::ACTION_DOWN => handler.mouse_down(
+                    &MouseEvent {
+                        pos,
+                        mods,
+                        button,
+                        count: 1,
+                    },
+                    &mut WinCtxImpl::default(),
+                ),
+                MotionEvent::ACTION_UP => handler.mouse_up(
+                    &MouseEvent {
+                        pos,
+                        mods,
+                        button,
+                        count: 0,
+                    },
+                    &mut WinCtxImpl::default(),
+                ),
+                // Ignore other actions
+                _ => {}
+            }
+        },
+        || {},
+    );
+    true
 }
 
 /// Called when the screen size changes. Including the first time
@@ -498,14 +522,21 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onSizeChanged(
     _old_width: i32,
     _old_height: i32,
 ) {
-    with_current_windowhandle(|window_handle| {
-        let mut handler = window_handle
-            .handler
-            .as_ref()
-            .expect("Handler is not set")
-            .borrow_mut();
-        handler.size(width as u32, height as u32, &mut WinCtxImpl::default());
-    });
+    with_current_windowhandle(
+        |window_handle| {
+            let mut handler = window_handle
+                .handler
+                .as_ref()
+                .expect("Handler is not set")
+                .borrow_mut();
+            handler.size(width as u32, height as u32, &mut WinCtxImpl::default());
+        },
+        || {
+            INITIAL_SIZE.with(|initial_size| {
+                *initial_size.borrow_mut() = (width, height);
+            })
+        },
+    );
 }
 
 /// Called when the screen size changes. Including the first time
