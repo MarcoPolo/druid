@@ -210,18 +210,17 @@ impl WindowHandle {
     /// TODO: we want to migrate this from dpi (with 96 as nominal) to a scale
     /// factor (with 1 as nominal).
     pub fn get_dpi(&self) -> f32 {
-        2.625 * 160.0
-        // with_android_context(|android_context| {
-        //     let res = android_context
-        //         .getResources()
-        //         .expect("Get Resources Failed")
-        //         .expect("Get Resources Failed");
-        //     let display_metrics = res
-        //         .getDisplayMetrics()
-        //         .expect("Get Display Metrics Failed")
-        //         .expect("Get Display Metrics Failed");
-        //     display_metrics.density()
-        // })
+        with_android_context(|android_context| {
+            let res = android_context
+                .getResources()
+                .expect("Get Resources Failed")
+                .expect("Get Resources Failed");
+            let display_metrics = res
+                .getDisplayMetrics()
+                .expect("Get Display Metrics Failed")
+                .expect("Get Display Metrics Failed");
+            display_metrics.density() * 160.0
+        })
     }
 }
 
@@ -450,10 +449,13 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onDraw(
     with_current_windowhandle(
         |window_handle| {
             let canvas = unsafe { canvas.with_unchecked(env).unwrap() };
-            static scale_factor: f32 = 2.625 * 160.0 / 96.0;
-            canvas.scale_float_float(scale_factor, scale_factor);
-            let mut canvas_context = CanvasContext::new_from_canvas(&canvas);
-            let mut android_render_context = AndroidRenderContext::new(&mut canvas_context);
+            // TODO should this be cached?
+            let scale_factor: f32 = window_handle.get_dpi() / 96.0;
+            canvas
+                .scale_float_float(scale_factor, scale_factor)
+                .expect("Failed to scale canvas");
+            let canvas_context = CanvasContext::new_from_canvas(canvas);
+            let mut android_render_context = AndroidRenderContext::new(canvas_context);
             let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
             let mut win_ctx = WinCtxImpl::default();

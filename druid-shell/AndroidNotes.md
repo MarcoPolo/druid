@@ -1,8 +1,17 @@
 # Notes for work on Android
 
+## Wish list
+
+Pointer Events
+IME
+
 ## Open Questions
 
-* How do I popup the soft keyboard?
+* Text input
+    * IME
+    * You need an android.view.inputmethod.InputConnection
+    * You can use a hardware keyboard
+
 
 ## Mappings
 
