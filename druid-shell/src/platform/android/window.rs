@@ -210,7 +210,7 @@ impl WindowHandle {
     /// TODO: we want to migrate this from dpi (with 96 as nominal) to a scale
     /// factor (with 1 as nominal).
     pub fn get_dpi(&self) -> f32 {
-        2.625
+        2.625 * 160.0
         // with_android_context(|android_context| {
         //     let res = android_context
         //         .getResources()
@@ -450,6 +450,8 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onDraw(
     with_current_windowhandle(
         |window_handle| {
             let canvas = unsafe { canvas.with_unchecked(env).unwrap() };
+            static scale_factor: f32 = 2.625 * 160.0 / 96.0;
+            canvas.scale_float_float(scale_factor, scale_factor);
             let mut canvas_context = CanvasContext::new_from_canvas(&canvas);
             let mut android_render_context = AndroidRenderContext::new(&mut canvas_context);
             let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
