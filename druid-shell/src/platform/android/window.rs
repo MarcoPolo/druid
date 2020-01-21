@@ -162,6 +162,21 @@ pub(crate) struct WindowHandle {
     idle_queue: Arc<Mutex<Vec<Box<dyn IdleCallback>>>>,
     druid_view: Rc<Global<View>>,
     handler: Option<Rc<RefCell<Box<dyn WinHandler>>>>,
+    dpi: f32,
+}
+
+fn get_dpi() -> f32 {
+    with_android_context(|android_context| {
+        let res = android_context
+            .getResources()
+            .expect("Get Resources Failed")
+            .expect("Get Resources Failed");
+        let display_metrics = res
+            .getDisplayMetrics()
+            .expect("Get Display Metrics Failed")
+            .expect("Get Display Metrics Failed");
+        display_metrics.density() * 160.0
+    })
 }
 
 impl Default for WindowHandle {
@@ -171,6 +186,7 @@ impl Default for WindowHandle {
             druid_view: get_druid_view(),
             idle_queue: Default::default(),
             handler: None,
+            dpi: get_dpi(),
         }
     }
 }
@@ -210,17 +226,13 @@ impl WindowHandle {
     /// TODO: we want to migrate this from dpi (with 96 as nominal) to a scale
     /// factor (with 1 as nominal).
     pub fn get_dpi(&self) -> f32 {
-        with_android_context(|android_context| {
-            let res = android_context
-                .getResources()
-                .expect("Get Resources Failed")
-                .expect("Get Resources Failed");
-            let display_metrics = res
-                .getDisplayMetrics()
-                .expect("Get Display Metrics Failed")
-                .expect("Get Display Metrics Failed");
-            display_metrics.density() * 160.0
-        })
+        // 96.0
+        self.dpi
+    }
+
+    pub fn get_scale_factor(&self) -> f32 {
+        self.dpi / 96.0
+        // 1.0
     }
 }
 
@@ -257,6 +269,7 @@ impl WindowBuilder {
             druid_view: get_druid_view(),
             idle_queue: Default::default(),
             handler: self.handler.map(|h| Rc::new(RefCell::new(h))),
+            dpi: get_dpi(),
         };
 
         {
@@ -373,8 +386,7 @@ fn next_timer_id() -> i32 {
 
 /// # Safety
 ///
-/// This function should be safe. Marked unsafe since there's no gaurantee env relates to the argument jobjects, but that should always be true.
-/// TODO: This may need to be called something else so it can be called by druid view's parent.
+/// This function should be safe. Marked unsafe since there's no gaurantee env relates to the argument jobjects, but that should be true.
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_marcopolo_druid_DruidView_setup(
     env: &Env,
@@ -383,9 +395,6 @@ pub unsafe extern "system" fn Java_io_marcopolo_druid_DruidView_setup(
     druid_view: Argument<View>,
     android_handler: Argument<Handler>,
 ) {
-    // let jnienv = env.as_jni_env();
-    // k
-    // Local::from_env_object(jnienv, &mut android_ctx as &mut jobject);
     setup(
         env,
         android_ctx
@@ -449,13 +458,10 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onDraw(
     with_current_windowhandle(
         |window_handle| {
             let canvas = unsafe { canvas.with_unchecked(env).unwrap() };
-            // TODO should this be cached?
-            let scale_factor: f32 = window_handle.get_dpi() / 96.0;
-            canvas
-                .scale_float_float(scale_factor, scale_factor)
-                .expect("Failed to scale canvas");
+            let scale_factor: f32 = window_handle.get_scale_factor();
             let canvas_context = CanvasContext::new_from_canvas(canvas);
-            let mut android_render_context = AndroidRenderContext::new(canvas_context);
+            let mut android_render_context =
+                AndroidRenderContext::new(canvas_context, scale_factor);
             let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
             let mut win_ctx = WinCtxImpl::default();
@@ -481,8 +487,8 @@ pub extern "system" fn Java_io_marcopolo_druid_DruidView_onTouchEvent(
             let mut handler = window_handle.handler.as_ref().unwrap().borrow_mut();
 
             let pos = Point::new(
-                motion_event.getX().unwrap() as f64,
-                motion_event.getY().unwrap() as f64,
+                (motion_event.getX().unwrap() / window_handle.get_scale_factor()) as f64,
+                (motion_event.getY().unwrap() / window_handle.get_scale_factor()) as f64,
             );
 
             let mods = KeyModifiers::default();

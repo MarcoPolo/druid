@@ -23,6 +23,7 @@ impl Application {
     ///
     /// [Unicode language identifier]: https://unicode.org/reports/tr35/#Unicode_language_identifier
     pub fn get_locale() -> String {
-        unimplemented!("TODO: get_locale with Context")
+        String::from("en-US")
+        // unimplemented!("TODO: get_locale with Context")
     }
 }
